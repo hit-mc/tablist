@@ -62,7 +62,7 @@ public class TabList {
 
         if (this.tabSettings.isEnabled()) {
             if (this.tabSettings.getToml().getBoolean("global-tablist.enabled")) {
-                this.globalTabList = new GlobalTabList(this, this.proxyServer);
+                this.globalTabList = new GlobalTabList(this, this.proxyServer, logger);
                 this.proxyServer.getEventManager().register(this, this.globalTabList);
                 logger.info("Loaded Global Tablist");
             }

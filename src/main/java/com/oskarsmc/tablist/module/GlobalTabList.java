@@ -3,56 +3,77 @@ package com.oskarsmc.tablist.module;
 import com.oskarsmc.tablist.TabList;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
-import com.velocitypowered.api.event.player.ServerConnectedEvent;
+import com.velocitypowered.api.event.player.ServerPostConnectEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
+import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.player.TabListEntry;
+import com.velocitypowered.api.proxy.server.ServerInfo;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import org.slf4j.Logger;
 
-import java.util.Optional;
-import java.util.UUID;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class GlobalTabList {
-    private ProxyServer proxyServer;
+    private final ProxyServer proxyServer;
+    private final Logger logger;
+    private final TabList plugin;
 
-    public GlobalTabList(TabList plugin, ProxyServer proxyServer) {
+    public GlobalTabList(TabList plugin, ProxyServer proxyServer, Logger logger) {
         this.proxyServer = proxyServer;
+        this.logger = logger;
+        this.plugin = plugin;
     }
 
     @Subscribe
-    public void connect(ServerConnectedEvent event) {
-        update();
+    public void connect(ServerPostConnectEvent event) {
+        proxyServer.getScheduler()
+                .buildTask(plugin, this::update)
+                .delay(500, TimeUnit.MILLISECONDS)
+                .schedule();
     }
 
     @Subscribe
     public void disconnect(DisconnectEvent event) {
-        update();
+        proxyServer.getScheduler()
+                .buildTask(plugin, this::update)
+                .delay(500, TimeUnit.MILLISECONDS)
+                .schedule();
     }
 
     public void update() {
         for (Player player : this.proxyServer.getAllPlayers()) {
             for (Player player1 : this.proxyServer.getAllPlayers()) {
-                if (!player.getTabList().containsEntry(player1.getUniqueId())) {
-                    player.getTabList().addEntry(
+                logger.info("player: {}, player1: {}", player, player1);
+                var tabList = player.getTabList();
+                var existing = tabList.getEntries().stream()
+                        .filter(ent -> Objects.equals(ent.getProfile().getId(), player1.getUniqueId()))
+                        .collect(Collectors.toUnmodifiableList());
+                var prefixString = player1.getCurrentServer()
+                        .map(ServerConnection::getServerInfo)
+                        .map(ServerInfo::getName)
+                        .map(s -> "[" + s + "] ")
+                        .orElse("");
+                var nameWithServerComponent = Component.text(prefixString).color(NamedTextColor.GREEN)
+                        .append(Component.text(player1.getUsername()).color(NamedTextColor.WHITE));
+                if (existing.isEmpty()) {
+                    logger.info("add entry in player {}'s list: {}", player.getUsername(), player1.getUsername());
+                    tabList.addEntry(
                             TabListEntry.builder()
-                                    .displayName(Component.text(player1.getUsername()))
+                                    .displayName(nameWithServerComponent)
                                     .profile(player1.getGameProfile())
-                                    .gameMode(0) // Impossible to get player game mode from proxy, always assume survival
-                                    .tabList(player.getTabList())
+                                    .tabList(tabList)
                                     .build()
                     );
-                }
-            }
-
-            for (TabListEntry entry : player.getTabList().getEntries()) {
-                UUID uuid = entry.getProfile().getId();
-                Optional<Player> playerOptional = proxyServer.getPlayer(uuid);
-                if (playerOptional.isPresent()) {
-                    // Update ping
-                    entry.setLatency((int) (player.getPing() * 1000));
                 } else {
-                    player.getTabList().removeEntry(uuid);
+                    var entry = existing.get(0);
+                    logger.info("update player {}'s entry: {}", player.getUsername(), entry);
+                    entry.setDisplayName(nameWithServerComponent);
+                    tabList.removeEntry(entry.getProfile().getId());
+                    tabList.addEntry(entry);
                 }
             }
         }
